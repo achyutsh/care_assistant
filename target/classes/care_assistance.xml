@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:api-gateway="http://www.mulesoft.org/schema/mule/api-gateway"
+      xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns:file="http://www.mulesoft.org/schema/mule/file"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+        http://www.mulesoft.org/schema/mule/api-gateway http://www.mulesoft.org/schema/mule/api-gateway/current/mule-api-gateway.xsd
+        http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking.xsd
+        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+        http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <file:config name="File_Config" doc:name="File Config">
+        <file:connection workingDir="src/main/resources/files"/>
+    </file:config>
+
+    <db:config name="Database_Config" doc:name="Database Config">
+        <db:my-sql-connection host="sql3.freesqldatabase.com" port="3306" user="sql3785160" password="wlnqSd1bz1" database="sql3785160">
+            <reconnection>
+                <reconnect frequency="3000" count="5"/>
+            </reconnection>
+        </db:my-sql-connection>
+    </db:config>
+
+    <configuration-properties doc:name="Configuration properties" file="care.properties"/>
+
+    <http:listener-config name="care_assistance" doc:name="HTTP Listener config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <flow name="careready-assistant-flow">
+        <http:listener doc:name="Listener" config-ref="care_assistance" path="/care"/>
+        <logger level="INFO" message="Starting CareReady Assistant processing"/>
+
+        <db:select doc:name="Select Patients" config-ref="Database_Config">
+            <db:sql><![CDATA[SELECT patient_id, name, email, conditions FROM patients]]></db:sql>
+        </db:select>
+
+        <set-variable variableName="patientReadinessReports" value="#[[]]" doc:name="Initialize Reports Array"/>
+
+        <foreach doc:name="For Each Patient">
+            <logger level="INFO" message="Processing patient: #[payload.name] (ID: #[payload.patient_id])"/>
+            <set-variable variableName="currentPatient" value="#[payload]"/>
+
+            <db:select doc:name="Query Pharmacy Data" config-ref="Database_Config">
+                <db:sql><![CDATA[SELECT medication_name, refill_status, last_refill_date FROM pharmacy_refills WHERE patient_id = :patientId]]></db:sql>
+                <db:input-parameters>#[{'patientId': vars.currentPatient.patient_id}]</db:input-parameters>
+            </db:select>
+
+            <set-variable variableName="pharmacyData" value="#[payload]"/>
+
+            <db:select doc:name="Query Appointment Data" config-ref="Database_Config">
+                <db:sql><![CDATA[SELECT appointment_type, appointment_date, status FROM appointments WHERE patient_id = :patientId]]></db:sql>
+                <db:input-parameters>#[{'patientId': vars.currentPatient.patient_id}]</db:input-parameters>
+            </db:select>
+
+            <set-variable variableName="appointmentData" value="#[payload]"/>
+
+            <ee:transform doc:name="Generate Patient Readiness Report">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+// Function to determine specialist based on conditions
+fun determineSpecialist(conditions) = 
+    if (conditions contains "diabetes") "Endocrinologist"
+    else if ((conditions contains "hypertension") or (conditions contains "cholesterol")) "Cardiologist"
+    else if (conditions contains "arthritis") "Rheumatologist"
+    else if (conditions contains "asthma") "Pulmonologist"
+    else "Primary Care Physician"
+// Function to check if refill is overdue
+fun isRefillOverdue(pharmacyData) =
+    sizeOf(pharmacyData filter (med) -> med.refill_status == "overdue") > 0
+// Function to check if appointment is overdue
+fun isAppointmentOverdue(appointmentData) =
+    sizeOf(appointmentData filter (appt) -> 
+        appt.status != "completed" and 
+        (appt.appointment_date as Date) < now()) > 0
+// Function to get next appointment
+fun getNextAppointment(appointmentData) =
+    (appointmentData filter (appt) -> 
+        appt.status != "completed" and 
+        (appt.appointment_date as Date) > now())
+    then
+        if (sizeOf($) > 0) $[0].appointment_type
+        else null
+// Generate patient readiness summary
+---
+{
+    patientId: vars.currentPatient.patientId,
+    name: vars.currentPatient.name,
+    email: vars.currentPatient.email,
+    conditions: vars.currentPatient.conditions,
+    refillStatus: if (isRefillOverdue(vars.pharmacyData)) "OVERDUE" else "CURRENT",
+    appointmentStatus: if (isAppointmentOverdue(vars.appointmentData)) "OVERDUE" else "CURRENT",
+    nextAppointment: getNextAppointment(vars.appointmentData),
+    recommendedSpecialist: determineSpecialist(vars.currentPatient.conditions),
+    careReadyStatus: if (isRefillOverdue(vars.pharmacyData) or isAppointmentOverdue(vars.appointmentData)) "NOT_READY" else "READY"
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+
+            <set-variable variableName="patientReadinessReports" value="#[%dw 2.0&#10;output application/java&#10;---&#10;vars.patientReadinessReports ++ [payload]]"/>
+        </foreach>
+
+        <ee:transform doc:name="Set Final Output">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    timestamp: now(),
+    totalPatients: sizeOf(vars.patientReadinessReports),
+    patientReports: vars.patientReadinessReports
+}
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <logger level="INFO" message="CareReady Assistant processing complete. Processed #[sizeOf(vars.patientReadinessReports)] patients."/>
+
+        <error-handler>
+            <on-error-propagate type="DB:CONNECTIVITY, DB:BAD_SQL_SYNTAX">
+                <logger level="ERROR" message="Database error occurred: #[error.description]"/>
+            </on-error-propagate>
+            <on-error-propagate type="ANY">
+                <logger level="ERROR" message="Unexpected error: #[error.description]"/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+</mule>
