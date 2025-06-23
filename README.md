@@ -46,9 +46,9 @@ The API works with three simple MySQL tables:
   * `status` — `completed` or `scheduled`
 
 ## ✅ Result
-
-When the API runs, it returns a consolidated JSON array of readiness reports for all patients. This output can be used by other systems or a chatbot to provide personalized care guidance to patients.
 ![image](https://github.com/user-attachments/assets/dc87d3fa-b2ec-4f42-b5db-cc9e7b1e96cd)
+
+**When the API runs, it returns a consolidated JSON array of readiness reports for all patients. This output can be used by other systems or a chatbot to provide personalized care guidance to patients.**
 
 
 ## 🔑 How to Run
