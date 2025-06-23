@@ -45,6 +45,14 @@ The API works with three simple MySQL tables:
   * `appointment_date` — scheduled date
   * `status` — `completed` or `scheduled`
 
+ ## Flow image
+ ![image](https://github.com/user-attachments/assets/6930be49-0416-461e-aac3-98b42c6c3d73)
+
+ 
+ ## Dataweave image 
+![image](https://github.com/user-attachments/assets/3a0fcdd0-93c0-4724-803a-efe4ebca73ec)
+
+
 ## ✅ Result
 ![image](https://github.com/user-attachments/assets/dc87d3fa-b2ec-4f42-b5db-cc9e7b1e96cd)
 
